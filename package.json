@@ -1,0 +1,34 @@
+{
+  "name": "claudevoice",
+  "version": "1.0.0",
+  "description": "Give Claude Code a voice! TTS wrapper for Claude Code CLI",
+  "main": "claudevoice",
+  "bin": {
+    "claudevoice": "./claudevoice"
+  },
+  "scripts": {
+    "postinstall": "echo '✅ ClaudeVoice installed! Run: claudevoice --list-voices'"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "tts",
+    "text-to-speech",
+    "voice",
+    "ai",
+    "assistant",
+    "cli"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "node-edge-tts": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_USERNAME/claudevoice.git"
+  }
+}
