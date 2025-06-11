@@ -11,11 +11,23 @@ const path = require('path');
 
 // Load Edge-TTS
 let EdgeTTS;
+
+// Get npm global root dynamically
+let npmGlobalRoot;
+try {
+    npmGlobalRoot = require('child_process')
+        .execSync('npm root -g', { encoding: 'utf8' })
+        .trim();
+} catch {}
+
 const ttsLocations = [
     './node_modules/node-edge-tts',
-    '/Users/jf/.npm-global/lib/node_modules/node-edge-tts',
+    npmGlobalRoot && path.join(npmGlobalRoot, 'node-edge-tts'),
+    path.join(os.homedir(), '.npm-global/lib/node_modules/node-edge-tts'),
+    '/usr/local/lib/node_modules/node-edge-tts',
+    '/opt/homebrew/lib/node_modules/node-edge-tts',
     'node-edge-tts'
-];
+].filter(Boolean);
 
 for (const loc of ttsLocations) {
     try {
