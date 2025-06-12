@@ -71,7 +71,7 @@ function loadConfig() {
             return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
         }
     } catch {}
-    return { voice: 'en-US-ChristopherNeural' };
+    return { voice: 'en-US-BrianNeural' };
 }
 
 // Save config
@@ -121,15 +121,28 @@ async function playAudio() {
 function speak(text) {
     const clean = text.trim();
     
-    // Don't speak duplicates
+    // Don't speak duplicates or partial duplicates
     if (spokenMessages.has(clean)) {
         return;
+    }
+    
+    // Check if this is a substring of something we already spoke
+    for (const spoken of spokenMessages) {
+        if (spoken.includes(clean) || clean.includes(spoken)) {
+            return;
+        }
     }
     
     if (clean.length > 10) {
         spokenMessages.add(clean); // Remember what we've spoken
         audioQueue.push(clean);
         playAudio();
+        
+        // Clean up old messages after a while to prevent memory growth
+        if (spokenMessages.size > 100) {
+            const messages = Array.from(spokenMessages);
+            messages.slice(0, 50).forEach(msg => spokenMessages.delete(msg));
+        }
     }
 }
 
@@ -137,20 +150,61 @@ function speak(text) {
 let messageBuffer = [];
 let collectingMessage = false;
 let recentApproval = false;
+let approvalStage = 0; // 0 = none, 1 = detected prompt, 2 = showing options
+let lastSpokenLine = '';  // Track last spoken line to prevent loops
 
 function processLine(line) {
-    const cleanLine = line.replace(/\x1b\[[0-9;]*m/g, '').trim();
+    // Filter out OSC sequences (]99;...) that appear after approval prompts
+    if (line.includes('\x1b]99;') || line.includes(']99;')) {
+        return;
+    }
+    
+    // Filter out lines containing only escape sequences and control chars
+    const strippedLine = line.replace(/\x1b\[[^m]*m/g, '').replace(/\x1b\]?[^\x1b\x07]*[\x1b\x07]/g, '');
+    const cleanLine = strippedLine.trim();
+    
+    // Skip empty or very short lines
+    if (cleanLine.length < 3) {
+        return;
+    }
+    
+    // Check for approval prompt options
+    const isApprovalOption = (
+        cleanLine.match(/^(1|2|3)\.\s*(Allow|Always allow|Decline)/i) ||
+        cleanLine.includes('Allow this time') ||
+        cleanLine.includes('Always allow') ||
+        cleanLine.includes('Decline and give feedback')
+    );
+    
+    if (isApprovalOption) {
+        approvalStage = 2;
+        recentApproval = true;
+        // Set a longer timeout for approval garbage
+        setTimeout(() => {
+            recentApproval = false;
+            approvalStage = 0;
+        }, 8000);
+        return; // Don't speak the options
+    }
     
     // Skip garbage after recent approval prompts
-    if (recentApproval) {
-        // Check if this looks like garbage
-        if (cleanLine.match(/^[0-9]+[a-z]+[0-9]*$/i) || 
-            cleanLine.match(/^1a2k|2k1a|1004l/i) ||
+    if (recentApproval || approvalStage > 0) {
+        // Enhanced garbage detection
+        if (cleanLine.match(/^[0-9]+[a-z]+[0-9]*$/i) ||  // Like "99a", "2k1a"
+            cleanLine.match(/^[a-z]+[0-9]+[a-z]*$/i) ||  // Like "a99", "abc123"
+            cleanLine.match(/^\??\d{3,4}[lh]$/i) ||      // Terminal sequences like "?1004l"
+            cleanLine.match(/^(1a2k|2k1a|1004l|99|2k|1a|1004l99)/i) || // Known garbage patterns
+            cleanLine.match(/^[lh]$/i) ||                // Single l or h
+            cleanLine.match(/^\d+[lh]$/i) ||            // Numbers followed by l or h
+            cleanLine.match(/^[a-z]{1,2}\d{1,2}[a-z]{0,2}$/i) || // Short alphanumeric garbage
             cleanLine.length < 5) {
             return;
         }
-        // Otherwise clear the flag
-        recentApproval = false;
+        // Only clear flags if we see real content
+        if (cleanLine.length > 15 && !cleanLine.match(/^[a-z0-9\s]+$/i)) {
+            recentApproval = false;
+            approvalStage = 0;
+        }
     }
     
     // Check for white bullet (⏺)
@@ -208,24 +262,37 @@ function processLine(line) {
     
     // Special handling for approval prompts
     if (!collectingMessage && cleanLine.length > 20) {
-        if (cleanLine.includes('Do you want to') ||
-            cleanLine.includes('approval') ||
-            cleanLine.includes('permission') ||
+        // Only check for actual approval prompts, not just the word "approval"
+        const isApprovalPrompt = (
+            cleanLine.includes('Do you want to') ||
+            (cleanLine.includes('approval') && cleanLine.includes('?')) ||
+            cleanLine.includes('permission to') ||
             cleanLine.includes('Would you like') ||
             cleanLine.includes('Shall I') ||
-            cleanLine.includes('Should I')) {
-            
-            // Make sure it's not a tool output
+            cleanLine.includes('Should I') ||
+            cleanLine.includes('needs permission to') ||
+            cleanLine.includes('requires approval')
+        );
+        
+        if (isApprovalPrompt) {
+            // Make sure it's not a tool output or duplicate
             if (!cleanLine.includes('(MCP)') && 
                 !cleanLine.includes('⎿') &&
-                !cleanLine.startsWith('{')) {
-                speak(cleanLine);
-                recentApproval = true;
+                !cleanLine.startsWith('{') &&
+                cleanLine !== lastSpokenLine) {  // Prevent speaking same line twice
                 
-                // Clear flag after a short delay
+                speak(cleanLine);
+                lastSpokenLine = cleanLine;  // Remember what we just spoke
+                recentApproval = true;
+                approvalStage = 1;
+                
+                // Clear flag after a longer delay since approval can take time
                 setTimeout(() => {
-                    recentApproval = false;
-                }, 2000);
+                    if (approvalStage === 1) {
+                        recentApproval = false;
+                        approvalStage = 0;
+                    }
+                }, 8000);
             }
         }
     }
@@ -327,7 +394,17 @@ claude.stdout.on('data', (chunk) => {
     process.stdout.write(chunk);
     
     // Buffer for line processing
-    buffer += chunk.toString();
+    const chunkStr = chunk.toString();
+    
+    // Check for mouse tracking sequences that indicate approval dialog state change
+    if (chunkStr.includes('\x1b[?1004l')) {
+        recentApproval = true;
+        setTimeout(() => {
+            recentApproval = false;
+        }, 3000);
+    }
+    
+    buffer += chunkStr;
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
     
