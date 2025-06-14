@@ -167,6 +167,7 @@ let collectingMessage = false;
 let recentApproval = false;
 let approvalStage = 0; // 0 = none, 1 = detected prompt, 2 = showing options
 let lastSpokenLine = '';  // Track last spoken line to prevent loops
+let garbageRepetitionCount = 0; // Track repeated garbage patterns
 
 function processLine(line) {
     // Filter out OSC sequences (]99;...) that appear after approval prompts
@@ -204,6 +205,26 @@ function processLine(line) {
     
     // Skip garbage after recent approval prompts
     if (recentApproval || approvalStage > 0) {
+        // Track repetitions of "2k1a" pattern
+        if (cleanLine.match(/^(2k1a|two\s*k\s*one\s*a)$/i)) {
+            garbageRepetitionCount++;
+            // If we see this pattern more than once, extend the approval timeout
+            if (garbageRepetitionCount > 1) {
+                setTimeout(() => {
+                    recentApproval = false;
+                    approvalStage = 0;
+                    garbageRepetitionCount = 0;
+                }, 15000); // Extend to 15 seconds
+            }
+            return;
+        }
+        
+        // Enhanced pattern for repeated "2k1a" with optional "g" at end
+        if (cleanLine.match(/^((2k1a|two\s*k\s*one\s*a)\s*)+g?$/i)) {
+            garbageRepetitionCount++;
+            return;
+        }
+        
         // Enhanced garbage detection
         if (cleanLine.match(/^[0-9]+[a-z]+[0-9]*$/i) ||  // Like "99a", "2k1a"
             cleanLine.match(/^[a-z]+[0-9]+[a-z]*$/i) ||  // Like "a99", "abc123"
@@ -221,6 +242,7 @@ function processLine(line) {
         if (cleanLine.length > 15 && !cleanLine.match(/^[a-z0-9\s]+$/i)) {
             recentApproval = false;
             approvalStage = 0;
+            garbageRepetitionCount = 0;
         }
     }
     
@@ -309,6 +331,7 @@ function processLine(line) {
                     if (approvalStage === 1) {
                         recentApproval = false;
                         approvalStage = 0;
+                        garbageRepetitionCount = 0;
                     }
                 }, 8000);
             }
