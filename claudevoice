@@ -64,6 +64,21 @@ const VOICES = [
     { id: 'en-US-MichelleNeural', name: 'Michelle', desc: 'Professional female' }
 ];
 
+// Check if message is tool-related (should be filtered)
+function isToolRelatedMessage(message) {
+    // Common tool-related verbs (shortened for efficiency)
+    const toolVerbs = /^(Updat|Modif|Chang|Add|Remov|Delet|Mark|Set|Clear|Reset|Edit|Creat|Writ|Read|Fetch|Load|Save|Track|Complet|Finish|Start|Init|Setup|Config|Install|Build|Run|Test|Deploy|Process|Analyz|Search|Check|Fix|Execut|Perform|Apply|Transform|Convert|Format|Import|Export|Generat|Calculat|Validat|Pars|Compil|Optimiz|Refactor|Migrat|Backup|Restor|Sync|Download|Upload)(ing|ed|e|es)?\s/i;
+    
+    // Check if message starts with a tool verb
+    if (toolVerbs.test(message)) {
+        // Additional check for common tool targets
+        const toolTargets = /(todo|task|item|list|file|code|function|variable|config|setting|database|cache|state|status|progress|component|module|package|dependency|test|build|deployment)/i;
+        return toolTargets.test(message);
+    }
+    
+    return false;
+}
+
 // Load saved config
 function loadConfig() {
     try {
@@ -193,11 +208,12 @@ function processLine(line) {
         if (cleanLine.match(/^[0-9]+[a-z]+[0-9]*$/i) ||  // Like "99a", "2k1a"
             cleanLine.match(/^[a-z]+[0-9]+[a-z]*$/i) ||  // Like "a99", "abc123"
             cleanLine.match(/^\??\d{3,4}[lh]\d*$/i) ||   // Terminal sequences like "?1004l", "1004l99"
-            cleanLine.match(/^(1a2k|2k1a|1004l|99|2k|1a|1004l99)/i) || // Known garbage patterns
+            cleanLine.match(/^(1a2k|2k1a|1004l|99|2k|1a|1004l99|two\s*k\s*one\s*a)/i) || // Known garbage patterns including "two k one a"
             cleanLine.match(/^[lh]$/i) ||                // Single l or h
             cleanLine.match(/^\d+[lh]\d*$/i) ||         // Numbers followed by l/h and optional numbers
             cleanLine.match(/^[a-z]{1,2}\d{1,2}[a-z]{0,2}$/i) || // Short alphanumeric garbage
             cleanLine.match(/^\d{3,4}[lh]\d{1,3}$/i) || // Specific pattern like 1004l99
+            cleanLine === 'g' ||                        // Single 'g' character
             cleanLine.length < 5) {
             return;
         }
@@ -221,6 +237,7 @@ function processLine(line) {
             !afterBullet.includes('obsidian:') &&
             !afterBullet.startsWith('Using') &&
             !afterBullet.match(/^\w+\(/) &&  // Function calls like "search("
+            !isToolRelatedMessage(afterBullet) &&
             afterBullet.length > 10) {
             
             messageBuffer = [afterBullet];

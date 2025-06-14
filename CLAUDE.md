@@ -45,14 +45,15 @@ The entire application is a single Node.js script (`claudevoice`) that:
 
 ## Known Issues
 
-After approval prompts, Claude CLI sometimes outputs garbage text containing patterns like "99", "1004l99", "1a2k", etc. The tool has enhanced filtering logic to handle these patterns:
+After approval prompts, Claude CLI sometimes outputs garbage text containing patterns like "99", "1004l99", "1a2k", "2k1a", etc. The tool has enhanced filtering logic to handle these patterns:
 
 - **Approval detection**: Lines 266-275 detect approval prompts and lines 172-177 detect approval options
-- **Garbage filtering**: Lines 191-201 filter out various junk patterns that appear after approval prompts
+- **Garbage filtering**: Lines 193-202 filter out various junk patterns that appear after approval prompts
 - **Stage tracking**: Uses `approvalStage` variable to track approval flow (0=none, 1=prompt detected, 2=options shown)
-- **Enhanced patterns**: Now catches variations like "1004l99" with regex patterns on lines 195, 198, and 200
+- **Enhanced patterns**: Now catches variations like "1004l99", "2k1a", "two k one a", and single 'g' character
+- **Tool message filtering**: Lines 67-80 define `isToolRelatedMessage()` function that filters out tool-related messages like "Update todos"
 
-If new garbage patterns appear, add them to the regex checks in lines 193-201 of the `claudevoice` file.
+If new garbage patterns appear, add them to the regex checks in lines 193-202 of the `claudevoice` file.
 
 ## Recommended CLAUDE.md Addition for Projects
 
