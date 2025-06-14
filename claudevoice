@@ -192,11 +192,12 @@ function processLine(line) {
         // Enhanced garbage detection
         if (cleanLine.match(/^[0-9]+[a-z]+[0-9]*$/i) ||  // Like "99a", "2k1a"
             cleanLine.match(/^[a-z]+[0-9]+[a-z]*$/i) ||  // Like "a99", "abc123"
-            cleanLine.match(/^\??\d{3,4}[lh]$/i) ||      // Terminal sequences like "?1004l"
+            cleanLine.match(/^\??\d{3,4}[lh]\d*$/i) ||   // Terminal sequences like "?1004l", "1004l99"
             cleanLine.match(/^(1a2k|2k1a|1004l|99|2k|1a|1004l99)/i) || // Known garbage patterns
             cleanLine.match(/^[lh]$/i) ||                // Single l or h
-            cleanLine.match(/^\d+[lh]$/i) ||            // Numbers followed by l or h
+            cleanLine.match(/^\d+[lh]\d*$/i) ||         // Numbers followed by l/h and optional numbers
             cleanLine.match(/^[a-z]{1,2}\d{1,2}[a-z]{0,2}$/i) || // Short alphanumeric garbage
+            cleanLine.match(/^\d{3,4}[lh]\d{1,3}$/i) || // Specific pattern like 1004l99
             cleanLine.length < 5) {
             return;
         }
