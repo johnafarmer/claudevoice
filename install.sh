@@ -65,6 +65,13 @@ chmod +x claudevoice
 echo "📍 Installing to /usr/local/bin..."
 if sudo cp claudevoice /usr/local/bin/; then
     echo "✅ ClaudeVoice installed!"
+    # Create cv alias symlink
+    echo "🔗 Creating 'cv' alias..."
+    if sudo ln -sf /usr/local/bin/claudevoice /usr/local/bin/cv; then
+        echo "✅ 'cv' alias created!"
+    else
+        echo "⚠️  Failed to create 'cv' alias"
+    fi
 else
     echo "❌ Failed to install to /usr/local/bin"
     echo "You can manually copy claudevoice to a directory in your PATH"
@@ -78,5 +85,8 @@ echo "Test it out:"
 echo "  claudevoice --list-voices    # See available voices"
 echo "  claudevoice --voice 10       # Try a British accent"
 echo "  claudevoice \"hello world\"    # Start using Claude with voice!"
+echo ""
+echo "You can also use 'cv' as a shortcut:"
+echo "  cv \"hello world\"            # Same as claudevoice"
 echo ""
 echo "Enjoy your new AI voice assistant! 🚀"
