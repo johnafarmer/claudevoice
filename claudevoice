@@ -66,6 +66,13 @@ const VOICES = [
 
 // Check if message is tool-related (should be filtered)
 function isToolRelatedMessage(message) {
+    // Direct matches for common tool messages
+    if (message.match(/^Update\s+Todos$/i) || 
+        message.match(/^Updating\s+todo/i) ||
+        message.match(/^Updated?\s+the\s+todo/i)) {
+        return true;
+    }
+    
     // Common tool-related verbs (shortened for efficiency)
     const toolVerbs = /^(Updat|Modif|Chang|Add|Remov|Delet|Mark|Set|Clear|Reset|Edit|Creat|Writ|Read|Fetch|Load|Save|Track|Complet|Finish|Start|Init|Setup|Config|Install|Build|Run|Test|Deploy|Process|Analyz|Search|Check|Fix|Execut|Perform|Apply|Transform|Convert|Format|Import|Export|Generat|Calculat|Validat|Pars|Compil|Optimiz|Refactor|Migrat|Backup|Restor|Sync|Download|Upload)(ing|ed|e|es)?\s/i;
     
@@ -77,6 +84,28 @@ function isToolRelatedMessage(message) {
     }
     
     return false;
+}
+
+// Check if message is todo-related content (should be filtered)
+function isTodoContent(message) {
+    // Direct todo list patterns
+    const todoPatterns = [
+        /^[\d\-\*•·]\s*(.*)/,                     // Bulleted/numbered lists
+        /^Todo\s*\d*:/i,                          // Todo labels
+        /^Task\s*\d*:/i,                          // Task labels
+        /^Item\s*\d*:/i,                          // Item labels
+        /^\[\s*\]/,                               // Checkboxes
+        /^\[x\]/i,                                // Checked boxes
+        /^(pending|in.?progress|complet)/i,      // Status indicators
+        /^(high|medium|low)\s*priority/i,        // Priority indicators
+        /todos?\s*list|task\s*list/i,            // List references
+        /^Here'?s?\s*(the|my|your)?\s*todos?/i,  // Todo introductions
+        /^Current\s*todos?:/i,                   // Current todo headers
+        /^Todo\s*items?:/i,                      // Todo item headers
+        /^The\s*todos?\s*(list|are|include)/i    // Todo descriptions
+    ];
+    
+    return todoPatterns.some(pattern => pattern.test(message));
 }
 
 // Load saved config
@@ -164,14 +193,10 @@ function speak(text) {
 // Simple line processor
 let messageBuffer = [];
 let collectingMessage = false;
-let recentApproval = false;
-let approvalStage = 0; // 0 = none, 1 = detected prompt, 2 = showing options
-let lastSpokenLine = '';  // Track last spoken line to prevent loops
-let garbageRepetitionCount = 0; // Track repeated garbage patterns
 
 function processLine(line) {
-    // Filter out OSC sequences (]99;...) that appear after approval prompts
-    if (line.includes('\x1b]99;') || line.includes(']99;')) {
+    // Filter out OSC sequences (]99;...) and other terminal control sequences
+    if (line.includes('\x1b]99;') || line.includes(']99;') || line.includes('\x1b[?1004')) {
         return;
     }
     
@@ -184,66 +209,41 @@ function processLine(line) {
         return;
     }
     
-    // Check for approval prompt options
-    const isApprovalOption = (
+    // Skip approval-related content entirely
+    const isApprovalRelated = (
+        // Approval options
         cleanLine.match(/^(1|2|3)\.\s*(Allow|Always allow|Decline)/i) ||
         cleanLine.includes('Allow this time') ||
         cleanLine.includes('Always allow') ||
-        cleanLine.includes('Decline and give feedback')
+        cleanLine.includes('Decline and give feedback') ||
+        // Approval prompts
+        cleanLine.includes('Do you want to') ||
+        (cleanLine.includes('approval') && cleanLine.includes('?')) ||
+        cleanLine.includes('permission to') ||
+        cleanLine.includes('Would you like') ||
+        cleanLine.includes('Shall I') ||
+        cleanLine.includes('Should I') ||
+        cleanLine.includes('needs permission to') ||
+        cleanLine.includes('requires approval')
     );
     
-    if (isApprovalOption) {
-        approvalStage = 2;
-        recentApproval = true;
-        // Set a longer timeout for approval garbage
-        setTimeout(() => {
-            recentApproval = false;
-            approvalStage = 0;
-        }, 8000);
-        return; // Don't speak the options
+    if (isApprovalRelated) {
+        return; // Skip all approval-related content
     }
     
-    // Skip garbage after recent approval prompts
-    if (recentApproval || approvalStage > 0) {
-        // Track repetitions of "2k1a" pattern
-        if (cleanLine.match(/^(2k1a|two\s*k\s*one\s*a)$/i)) {
-            garbageRepetitionCount++;
-            // If we see this pattern more than once, extend the approval timeout
-            if (garbageRepetitionCount > 1) {
-                setTimeout(() => {
-                    recentApproval = false;
-                    approvalStage = 0;
-                    garbageRepetitionCount = 0;
-                }, 15000); // Extend to 15 seconds
-            }
-            return;
-        }
-        
-        // Enhanced pattern for repeated "2k1a" with optional "g" at end
-        if (cleanLine.match(/^((2k1a|two\s*k\s*one\s*a)\s*)+g?$/i)) {
-            garbageRepetitionCount++;
-            return;
-        }
-        
-        // Enhanced garbage detection
-        if (cleanLine.match(/^[0-9]+[a-z]+[0-9]*$/i) ||  // Like "99a", "2k1a"
-            cleanLine.match(/^[a-z]+[0-9]+[a-z]*$/i) ||  // Like "a99", "abc123"
-            cleanLine.match(/^\??\d{3,4}[lh]\d*$/i) ||   // Terminal sequences like "?1004l", "1004l99"
-            cleanLine.match(/^(1a2k|2k1a|1004l|99|2k|1a|1004l99|two\s*k\s*one\s*a)/i) || // Known garbage patterns including "two k one a"
-            cleanLine.match(/^[lh]$/i) ||                // Single l or h
-            cleanLine.match(/^\d+[lh]\d*$/i) ||         // Numbers followed by l/h and optional numbers
-            cleanLine.match(/^[a-z]{1,2}\d{1,2}[a-z]{0,2}$/i) || // Short alphanumeric garbage
-            cleanLine.match(/^\d{3,4}[lh]\d{1,3}$/i) || // Specific pattern like 1004l99
-            cleanLine === 'g' ||                        // Single 'g' character
-            cleanLine.length < 5) {
-            return;
-        }
-        // Only clear flags if we see real content
-        if (cleanLine.length > 15 && !cleanLine.match(/^[a-z0-9\s]+$/i)) {
-            recentApproval = false;
-            approvalStage = 0;
-            garbageRepetitionCount = 0;
-        }
+    // Filter out common garbage patterns that appear around approval prompts
+    if (cleanLine.match(/^[0-9]+[a-z]+[0-9]*$/i) ||  // Like "99a", "2k1a"
+        cleanLine.match(/^[a-z]+[0-9]+[a-z]*$/i) ||  // Like "a99", "abc123"
+        cleanLine.match(/^\??\d{3,4}[lh]\d*$/i) ||   // Terminal sequences like "?1004l", "1004l99"
+        cleanLine.match(/^(1a2k|2k1a|1004l|99|2k|1a|1004l99|two\s*k\s*one\s*a)/i) || // Known garbage patterns
+        cleanLine.match(/^[lh]$/i) ||                // Single l or h
+        cleanLine.match(/^\d+[lh]\d*$/i) ||         // Numbers followed by l/h
+        cleanLine.match(/^[a-z]{1,2}\d{1,2}[a-z]{0,2}$/i) || // Short alphanumeric garbage
+        cleanLine.match(/^\d{3,4}[lh]\d{1,3}$/i) || // Specific pattern like 1004l99
+        cleanLine.match(/^((2k1a|two\s*k\s*one\s*a)\s*)+g?$/i) || // Repeated 2k1a patterns
+        cleanLine === 'g' ||                        // Single 'g' character
+        cleanLine.length < 5) {
+        return;
     }
     
     // Check for white bullet (⏺)
@@ -260,6 +260,7 @@ function processLine(line) {
             !afterBullet.startsWith('Using') &&
             !afterBullet.match(/^\w+\(/) &&  // Function calls like "search("
             !isToolRelatedMessage(afterBullet) &&
+            !isTodoContent(afterBullet) &&       // Filter todo content
             afterBullet.length > 10) {
             
             messageBuffer = [afterBullet];
@@ -285,7 +286,8 @@ function processLine(line) {
             cleanLine.includes('github:') ||
             cleanLine.includes('obsidian:') ||
             cleanLine.startsWith('Using') ||
-            cleanLine.match(/^\w+\(/)) {
+            cleanLine.match(/^\w+\(/) ||
+            isTodoContent(cleanLine)) {    // Stop if we hit todo content
             
             // Speak what we collected
             if (messageBuffer.length > 0) {
@@ -294,47 +296,9 @@ function processLine(line) {
             }
             messageBuffer = [];
             collectingMessage = false;
-        } else {
-            // Add non-empty line to message
+        } else if (!isTodoContent(cleanLine)) {  // Don't add todo content lines
+            // Add non-empty, non-todo line to message
             messageBuffer.push(cleanLine);
-        }
-    }
-    
-    // Special handling for approval prompts
-    if (!collectingMessage && cleanLine.length > 20) {
-        // Only check for actual approval prompts, not just the word "approval"
-        const isApprovalPrompt = (
-            cleanLine.includes('Do you want to') ||
-            (cleanLine.includes('approval') && cleanLine.includes('?')) ||
-            cleanLine.includes('permission to') ||
-            cleanLine.includes('Would you like') ||
-            cleanLine.includes('Shall I') ||
-            cleanLine.includes('Should I') ||
-            cleanLine.includes('needs permission to') ||
-            cleanLine.includes('requires approval')
-        );
-        
-        if (isApprovalPrompt) {
-            // Make sure it's not a tool output or duplicate
-            if (!cleanLine.includes('(MCP)') && 
-                !cleanLine.includes('⎿') &&
-                !cleanLine.startsWith('{') &&
-                cleanLine !== lastSpokenLine) {  // Prevent speaking same line twice
-                
-                speak(cleanLine);
-                lastSpokenLine = cleanLine;  // Remember what we just spoke
-                recentApproval = true;
-                approvalStage = 1;
-                
-                // Clear flag after a longer delay since approval can take time
-                setTimeout(() => {
-                    if (approvalStage === 1) {
-                        recentApproval = false;
-                        approvalStage = 0;
-                        garbageRepetitionCount = 0;
-                    }
-                }, 8000);
-            }
         }
     }
 }
@@ -435,17 +399,7 @@ claude.stdout.on('data', (chunk) => {
     process.stdout.write(chunk);
     
     // Buffer for line processing
-    const chunkStr = chunk.toString();
-    
-    // Check for mouse tracking sequences that indicate approval dialog state change
-    if (chunkStr.includes('\x1b[?1004l')) {
-        recentApproval = true;
-        setTimeout(() => {
-            recentApproval = false;
-        }, 3000);
-    }
-    
-    buffer += chunkStr;
+    buffer += chunk.toString();
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
     
