@@ -133,6 +133,9 @@ let audioQueue = [];
 let isPlaying = false;
 let spokenMessages = new Set(); // Track what we've already spoken
 
+// Track current audio process for killing
+let currentAudioProcess = null;
+
 // Play audio queue
 async function playAudio() {
     if (isPlaying || audioQueue.length === 0) return;
@@ -149,13 +152,15 @@ async function playAudio() {
         const args = process.platform === 'win32' ? 
             ['-c', `(New-Object Media.SoundPlayer '${tempFile}').PlaySync()`] : [tempFile];
         
-        const proc = spawn(player, args, { stdio: 'ignore' });
-        proc.on('exit', () => {
+        currentAudioProcess = spawn(player, args, { stdio: 'ignore' });
+        currentAudioProcess.on('exit', () => {
             try { fs.unlinkSync(tempFile); } catch {}
+            currentAudioProcess = null;
             isPlaying = false;
             playAudio();
         });
     } catch {
+        currentAudioProcess = null;
         isPlaying = false;
         playAudio();
     }
@@ -190,11 +195,71 @@ function speak(text) {
     }
 }
 
+// Stop all TTS immediately
+function stopAllTTS() {
+    // Clear the queue
+    audioQueue = [];
+    
+    // Kill current audio if playing
+    if (currentAudioProcess) {
+        try {
+            currentAudioProcess.kill('SIGKILL');
+        } catch {}
+        currentAudioProcess = null;
+    }
+    
+    // Reset playing state
+    isPlaying = false;
+    
+    // Clear spoken messages to allow re-speaking if needed
+    spokenMessages.clear();
+    
+    // Reset message collection
+    messageBuffer = [];
+    collectingMessage = false;
+}
+
 // Simple line processor
 let messageBuffer = [];
 let collectingMessage = false;
+let compactMode = false;
 
 function processLine(line) {
+    // Check for cvstfu! command
+    if (line.includes('cvstfu!')) {
+        stopAllTTS();
+        return; // Don't process this line further
+    }
+    // Check for /compact command
+    if (line.includes('/compact')) {
+        // User is using /compact - clear spoken messages to avoid re-reading
+        spokenMessages.clear();
+        compactMode = true;
+        // Don't process this line further
+        return;
+    }
+    
+    // If we just saw /compact, skip processing for a short time
+    if (compactMode) {
+        // Check if this line indicates compact is done (empty line or new prompt)
+        const cleanLine = line.replace(/\x1b\[[^m]*m/g, '').trim();
+        if (cleanLine === '' || cleanLine.includes('❯') || cleanLine.includes('$')) {
+            compactMode = false;
+        }
+        return; // Skip processing while in compact mode
+    }
+    
+    // Also check for lines that look like compacted conversation history
+    // These typically start with "Human:" or "Assistant:" or contain message timestamps
+    const strippedForCheck = line.replace(/\x1b\[[^m]*m/g, '').trim();
+    if (strippedForCheck.startsWith('Human:') || 
+        strippedForCheck.startsWith('Assistant:') ||
+        strippedForCheck.match(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/) ||
+        strippedForCheck.includes('Conversation compacted')) {
+        // This looks like compacted history - don't speak it
+        return;
+    }
+    
     // Filter out OSC sequences (]99;...) and other terminal control sequences
     if (line.includes('\x1b]99;') || line.includes(']99;') || line.includes('\x1b[?1004')) {
         return;
