@@ -225,8 +225,8 @@ let collectingMessage = false;
 let compactMode = false;
 
 function processLine(line) {
-    // Check for cvstfu! command
-    if (line.includes('cvstfu!')) {
+    // Check for //stfu command
+    if (line.includes('//stfu')) {
         stopAllTTS();
         return; // Don't process this line further
     }
