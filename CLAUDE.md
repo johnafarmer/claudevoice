@@ -6,27 +6,50 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ClaudeVoice is a Node.js wrapper around Claude CLI that adds text-to-speech (TTS) functionality using Edge-TTS neural voices. The tool filters Claude's output to speak only explanatory text while preserving the full visual terminal experience.
 
-## Commands
+## Quick Reference Commands
 
-**Installation:**
+**Installation & Setup:**
 ```bash
-# Automated installation
+# Automated installation (recommended)
 ./install.sh
 
 # Manual installation  
 npm install -g node-edge-tts
 chmod +x claudevoice
 sudo cp claudevoice /usr/local/bin/
+
+# Create cv alias
+sudo ln -sf /usr/local/bin/claudevoice /usr/local/bin/cv
 ```
 
-**Testing:**
+**Testing & Development:**
 ```bash
 # Run demo
 ./demo.sh
 
 # Test directly
 ./claudevoice "explain this code"
+# or use the cv alias
+cv "what is 2+2?"
+
+# Test voice changes
+cv --list-voices
+cv --voice 10  # British accent
+cv --voice 13  # Aria (female voice)
+
+# Test filtering (for development)
+./test-filters.sh
+
+# Debug terminal output capture
+./debug-capture.sh "your command"
+
+# Test compact mode handling
+./test-compact.sh
 ```
+
+**User Commands During Session:**
+- `//stfu` or `cvstfu!` - Immediately stop TTS output
+- `/compact` - Claude's compact mode (TTS auto-pauses during compaction)
 
 ## Architecture
 
@@ -36,6 +59,29 @@ The entire application is a single Node.js script (`claudevoice`) that:
 3. Queues filtered text for TTS playback using node-edge-tts
 4. Handles approval prompts and filters terminal artifacts
 
+### Core Components
+
+**Main Process Flow (`claudevoice:452-490`):**
+- Uses `/usr/bin/script` wrapper to maintain TTY compatibility
+- Processes stdout data in chunks, splitting by newlines
+- Passes through all visual output unchanged while filtering for TTS
+
+**Text Filtering (`processLine` function, `claudevoice:227-369`):**
+- Detects ⏺ bullet markers for Claude's explanatory text
+- Filters out terminal control sequences, approval prompts, and garbage patterns
+- Handles `/compact` mode detection to avoid re-reading conversation history
+- Skips tool-related messages and todo list content
+
+**TTS Queue Management (`claudevoice:140-196`):**
+- Maintains audio queue with deduplication (via `spokenMessages` Set)
+- Plays audio files sequentially using platform-specific players
+- Handles interrupt commands (`//stfu`, `cvstfu!`) to stop playback immediately
+
+**Voice Configuration (`claudevoice:45-65`):**
+- 15 pre-configured Edge-TTS neural voices
+- Config persisted in `~/.claudevoice-config.json`
+- Voice selection via `--voice <number>` command
+
 ## Key Implementation Details
 
 - **Approval prompt bypassing**: The tool now completely bypasses all approval-related content to avoid garbage output
@@ -43,6 +89,7 @@ The entire application is a single Node.js script (`claudevoice`) that:
 - **Text processing**: Lines handle text extraction, cleaning, and queuing for TTS
 - **Voice configuration**: Stored in `~/.claudevoice-config.json`
 - **Simplified processing**: Removed approval tracking logic for cleaner, more reliable output
+- **Deduplication**: Prevents speaking the same content multiple times using a Set-based approach
 
 ## Known Issues
 
@@ -102,3 +149,47 @@ Here's what I accomplished:
 ```
 
 This format ensures the TTS system speaks a complete, informative sentence before encountering any formatting that might interrupt the flow.
+
+## Development Workflow
+
+### Making Changes to ClaudeVoice
+
+1. **Modifying the main script**: Edit `claudevoice` directly. No build process needed.
+
+2. **Testing changes locally**:
+   ```bash
+   # Test without installing
+   ./claudevoice "test command"
+   
+   # Install locally for system-wide testing
+   chmod +x claudevoice
+   sudo cp claudevoice /usr/local/bin/
+   ```
+
+3. **Adding new garbage patterns**: Update the regex patterns in `processLine()` function around line 300-310.
+
+4. **Testing edge cases**:
+   - Approval prompts: Test commands that require file access
+   - Compact mode: Use `/compact` command and verify TTS pauses
+   - Interrupt handling: Test `//stfu` during long outputs
+
+### Common Issues and Solutions
+
+- **"node-edge-tts not found"**: The script searches multiple locations (lines 23-30). Add new paths if needed.
+- **No audio on Linux**: Ensure `mpg123` is installed (`sudo apt-get install mpg123`)
+- **Duplicate speech**: Check the `spokenMessages` Set logic (lines 174-195)
+
+### Project File Structure
+
+```
+claudevoice/
+├── claudevoice          # Main executable script
+├── install.sh          # Automated installer
+├── demo.sh            # Interactive demo
+├── test-filters.sh    # Filter testing script
+├── test-compact.sh    # Compact mode testing
+├── debug-capture.sh   # Terminal output debugging
+├── CLAUDE.md          # This file
+├── README.md          # User documentation
+└── package.json       # NPM package info
+```

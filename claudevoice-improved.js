@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * ClaudeVoice - Simple and working with voice selection
+ * ClaudeVoice - Improved version based on comprehensive pattern analysis
  */
 
 const { spawn } = require('child_process');
@@ -63,50 +63,6 @@ const VOICES = [
     { id: 'en-US-JennyNeural', name: 'Jenny', desc: 'Friendly female voice' },
     { id: 'en-US-MichelleNeural', name: 'Michelle', desc: 'Professional female' }
 ];
-
-// Check if message is tool-related (should be filtered)
-function isToolRelatedMessage(message) {
-    // Direct matches for common tool messages
-    if (message.match(/^Update\s+Todos$/i) || 
-        message.match(/^Updating\s+todo/i) ||
-        message.match(/^Updated?\s+the\s+todo/i)) {
-        return true;
-    }
-    
-    // Common tool-related verbs (shortened for efficiency)
-    const toolVerbs = /^(Updat|Modif|Chang|Add|Remov|Delet|Mark|Set|Clear|Reset|Edit|Creat|Writ|Read|Fetch|Load|Save|Track|Complet|Finish|Start|Init|Setup|Config|Install|Build|Run|Test|Deploy|Process|Analyz|Search|Check|Fix|Execut|Perform|Apply|Transform|Convert|Format|Import|Export|Generat|Calculat|Validat|Pars|Compil|Optimiz|Refactor|Migrat|Backup|Restor|Sync|Download|Upload)(ing|ed|e|es)?\s/i;
-    
-    // Check if message starts with a tool verb
-    if (toolVerbs.test(message)) {
-        // Additional check for common tool targets
-        const toolTargets = /(todo|task|item|list|file|code|function|variable|config|setting|database|cache|state|status|progress|component|module|package|dependency|test|build|deployment)/i;
-        return toolTargets.test(message);
-    }
-    
-    return false;
-}
-
-// Check if message is todo-related content (should be filtered)
-function isTodoContent(message) {
-    // Direct todo list patterns
-    const todoPatterns = [
-        /^[\d\-\*•·]\s*(.*)/,                     // Bulleted/numbered lists
-        /^Todo\s*\d*:/i,                          // Todo labels
-        /^Task\s*\d*:/i,                          // Task labels
-        /^Item\s*\d*:/i,                          // Item labels
-        /^\[\s*\]/,                               // Checkboxes
-        /^\[x\]/i,                                // Checked boxes
-        /^(pending|in.?progress|complet)/i,      // Status indicators
-        /^(high|medium|low)\s*priority/i,        // Priority indicators
-        /todos?\s*list|task\s*list/i,            // List references
-        /^Here'?s?\s*(the|my|your)?\s*todos?/i,  // Todo introductions
-        /^Current\s*todos?:/i,                   // Current todo headers
-        /^Todo\s*items?:/i,                      // Todo item headers
-        /^The\s*todos?\s*(list|are|include)/i    // Todo descriptions
-    ];
-    
-    return todoPatterns.some(pattern => pattern.test(message));
-}
 
 // Load saved config
 function loadConfig() {
@@ -219,156 +175,219 @@ function stopAllTTS() {
     collectingMessage = false;
 }
 
-// Simple line processor
+// Pattern detection states
 let messageBuffer = [];
 let collectingMessage = false;
-let compactMode = false;
+let recentlySeenPlanMode = false;
+let recentlySeenCompact = false;
+let inApprovalContext = false;
+let approvalTimeout = null;
 
+// Comprehensive garbage patterns based on analysis
+const GARBAGE_PATTERNS = [
+    // Terminal control sequence remnants
+    /^\??\d{3,4}[lh]\d*$/i,          // ?1004l, 1004l99
+    /^[lh]\d*$/i,                     // l99, h1
+    /^\d+[lh]$/i,                     // 99l, 1004l
+    
+    // Known specific garbage
+    /^(1a2k|2k1a|1004l|99|2k|1a)$/i,
+    /^(two\s*k\s*one\s*a|2\s*k\s*1\s*a)$/i,
+    /^g$/i,
+    
+    // Repeated patterns
+    /^((2k1a|two\s*k\s*one\s*a|1a2k)\s*)+g?$/i,
+    
+    // Short alphanumeric garbage
+    /^[a-z]{1,2}\d{1,3}$/i,           // a99, ab123
+    /^\d{1,3}[a-z]{1,2}$/i,           // 99a, 123ab
+    /^[a-z]\d[a-z]\d?$/i,             // a1b2
+    
+    // Single characters or very short
+    /^[a-z]$/i,
+    /^[A-Z]$/,
+    /^\d{1,2}$/,
+    /^[^\w\s]{1,3}$/,                 // Special chars only
+];
+
+// Tool output patterns to filter
+const TOOL_OUTPUT_PATTERNS = [
+    /^Running command:/i,
+    /^Reading file:/i,
+    /^Invoking mcp_/i,
+    /^✓ Successfully/i,
+    /^✗ Error:/i,
+    /^\[\d+\/\d+\]/,                  // Progress indicators [1/5]
+    /^Searching for/i,
+    /^Found \d+ (files?|matches?)/i,
+    /^Writing to file:/i,
+    /^Creating file:/i,
+    /^Updating file:/i,
+];
+
+// Approval-related patterns
+const APPROVAL_PATTERNS = [
+    /\b(allow|decline|permission|approval|authorize|grant|proceed)\b/i,
+    /do you want to/i,
+    /would you like/i,
+    /shall I/i,
+    /should I/i,
+    /may I/i,
+    /can I/i,
+    /\?.*\(yes\/no\)/i,
+    /^[1-3]\.\s*(Allow|Always allow|Decline)/i,
+];
+
+// Clean terminal control sequences
+function cleanTerminalCodes(line) {
+    return line
+        .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')     // ANSI CSI sequences
+        .replace(/\x1b\][^\x07]*\x07/g, '')         // OSC sequences
+        .replace(/\x1b[PX\^_][^\\]*\\/g, '')        // DCS/SOS/PM/APC sequences
+        .replace(/\x1b[()][A-Z0-9]/g, '')           // Character set sequences
+        .replace(/\x1b[<=>]/g, '')                  // Other escape codes
+        .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F]/g, '') // Control chars (except tab/newline/CR)
+        .replace(/\x7F/g, '')                        // DEL character
+        .replace(/\x9B[0-9;]*[a-zA-Z]/g, '');       // 8-bit CSI
+}
+
+// Check if line contains approval-related content
+function isApprovalRelated(line) {
+    return APPROVAL_PATTERNS.some(pattern => pattern.test(line));
+}
+
+// Check if line is garbage
+function isGarbage(line) {
+    return GARBAGE_PATTERNS.some(pattern => pattern.test(line));
+}
+
+// Check if line is tool output
+function isToolOutput(line) {
+    return TOOL_OUTPUT_PATTERNS.some(pattern => pattern.test(line));
+}
+
+// Process each line of output
 function processLine(line) {
     // Check for interrupt commands
-    if (line.includes('cvstfu!') || line.includes('//stfu')) {
+    if (line.includes('//stfu') || line.includes('cvstfu!')) {
         stopAllTTS();
-        return; // Don't process this line further
-    }
-    // Check for /compact command
-    if (line.includes('/compact')) {
-        // User is using /compact - clear spoken messages to avoid re-reading
-        spokenMessages.clear();
-        compactMode = true;
-        // Don't process this line further
         return;
     }
     
-    // If we just saw /compact, skip processing for a short time
-    if (compactMode) {
-        // Check if this line indicates compact is done (empty line or new prompt)
-        const cleanLine = line.replace(/\x1b\[[^m]*m/g, '').trim();
-        if (cleanLine === '' || cleanLine.includes('❯') || cleanLine.includes('$')) {
-            compactMode = false;
-        }
-        return; // Skip processing while in compact mode
-    }
-    
-    // Also check for lines that look like compacted conversation history
-    // These typically start with "Human:" or "Assistant:" or contain message timestamps
-    const strippedForCheck = line.replace(/\x1b\[[^m]*m/g, '').trim();
-    if (strippedForCheck.startsWith('Human:') || 
-        strippedForCheck.startsWith('Assistant:') ||
-        strippedForCheck.match(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/) ||
-        strippedForCheck.includes('Conversation compacted')) {
-        // This looks like compacted history - don't speak it
-        return;
-    }
-    
-    // Filter out OSC sequences (]99;...) and other terminal control sequences
-    if (line.includes('\x1b]99;') || line.includes(']99;') || line.includes('\x1b[?1004')) {
-        return;
-    }
-    
-    // Filter out lines containing only escape sequences and control chars
-    const strippedLine = line.replace(/\x1b\[[^m]*m/g, '').replace(/\x1b\]?[^\x1b\x07]*[\x1b\x07]/g, '');
-    const cleanLine = strippedLine.trim();
+    // Clean the line
+    const cleanedLine = cleanTerminalCodes(line).trim();
     
     // Skip empty or very short lines
-    if (cleanLine.length < 3) {
+    if (!cleanedLine || cleanedLine.length < 2) {
         return;
     }
     
-    // Skip approval-related content entirely
-    const isApprovalRelated = (
-        // Approval options
-        cleanLine.match(/^(1|2|3)\.\s*(Allow|Always allow|Decline)/i) ||
-        cleanLine.includes('Allow this time') ||
-        cleanLine.includes('Always allow') ||
-        cleanLine.includes('Decline and give feedback') ||
-        // Approval prompts
-        cleanLine.includes('Do you want to') ||
-        (cleanLine.includes('approval') && cleanLine.includes('?')) ||
-        cleanLine.includes('permission to') ||
-        cleanLine.includes('Would you like') ||
-        cleanLine.includes('Shall I') ||
-        cleanLine.includes('Should I') ||
-        cleanLine.includes('needs permission to') ||
-        cleanLine.includes('requires approval')
-    );
-    
-    if (isApprovalRelated) {
-        return; // Skip all approval-related content
-    }
-    
-    // Filter out common garbage patterns that appear around approval prompts
-    if (cleanLine.match(/^[0-9]+[a-z]+[0-9]*$/i) ||  // Like "99a", "2k1a"
-        cleanLine.match(/^[a-z]+[0-9]+[a-z]*$/i) ||  // Like "a99", "abc123"
-        cleanLine.match(/^\??\d{3,4}[lh]\d*$/i) ||   // Terminal sequences like "?1004l", "1004l99"
-        cleanLine.match(/^(1a2k|2k1a|1004l|99|2k|1a|1004l99|two\s*k\s*one\s*a)/i) || // Known garbage patterns
-        cleanLine.match(/^[lh]$/i) ||                // Single l or h
-        cleanLine.match(/^\d+[lh]\d*$/i) ||         // Numbers followed by l/h
-        cleanLine.match(/^[a-z]{1,2}\d{1,2}[a-z]{0,2}$/i) || // Short alphanumeric garbage
-        cleanLine.match(/^\d{3,4}[lh]\d{1,3}$/i) || // Specific pattern like 1004l99
-        cleanLine.match(/^((2k1a|two\s*k\s*one\s*a)\s*)+g?$/i) || // Repeated 2k1a patterns
-        cleanLine === 'g' ||                        // Single 'g' character
-        cleanLine.length < 5) {
+    // Detect plan mode entry (multiple patterns)
+    if (cleanedLine.includes('entering plan mode') || 
+        cleanedLine.includes('exit_plan_mode') ||
+        cleanedLine.includes("Here's my plan:") ||
+        cleanedLine.includes("Let me plan")) {
+        recentlySeenPlanMode = true;
+        spokenMessages.clear();
+        setTimeout(() => { recentlySeenPlanMode = false; }, 10000);
         return;
     }
     
-    // Check for white bullet (⏺)
-    if (cleanLine.startsWith('⏺')) {
-        // Extract message after bullet
-        const afterBullet = cleanLine.substring(1).trim();
+    // Detect compact mode
+    if (line.includes('/compact') || cleanedLine.includes('Conversation compacted')) {
+        recentlySeenCompact = true;
+        spokenMessages.clear();
+        setTimeout(() => { recentlySeenCompact = false; }, 5000);
+        return;
+    }
+    
+    // Skip history lines in compact mode
+    if (recentlySeenCompact && (
+        cleanedLine.startsWith('Human:') || 
+        cleanedLine.startsWith('Assistant:') ||
+        cleanedLine.match(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/)
+    )) {
+        return;
+    }
+    
+    // Handle approval context
+    if (isApprovalRelated(cleanedLine)) {
+        inApprovalContext = true;
+        clearTimeout(approvalTimeout);
+        approvalTimeout = setTimeout(() => {
+            inApprovalContext = false;
+        }, 8000);
+        return;
+    }
+    
+    // Skip garbage in approval context
+    if (inApprovalContext && isGarbage(cleanedLine)) {
+        return;
+    }
+    
+    // Skip tool output patterns
+    if (isToolOutput(cleanedLine)) {
+        return;
+    }
+    
+    // Check for ⏺ bullet (main explanatory text marker)
+    if (cleanedLine.startsWith('⏺')) {
+        const content = cleanedLine.substring(1).trim();
         
-        // Filter out tool calls and MCP events
-        if (afterBullet && 
-            !afterBullet.includes('(MCP)') &&
-            !afterBullet.includes('asana:') &&
-            !afterBullet.includes('github:') &&
-            !afterBullet.includes('obsidian:') &&
-            !afterBullet.startsWith('Using') &&
-            !afterBullet.match(/^\w+\(/) &&  // Function calls like "search("
-            !isToolRelatedMessage(afterBullet) &&
-            !isTodoContent(afterBullet) &&       // Filter todo content
-            afterBullet.length > 10) {
-            
-            messageBuffer = [afterBullet];
+        // Filter out common tool messages
+        if (content && 
+            content.length > 10 &&
+            !content.match(/^\w+\s*\(/) &&  // Function calls
+            !content.match(/^(Using|Updating|Updated|Creating|Created|Running|Executing|Processing|Analyzing|Searching|Loading|Saving|Building|Installing|Deleting|Removing|Adding|Modifying)\s/i)
+        ) {
+            messageBuffer = [content];
             collectingMessage = true;
         }
         return;
     }
     
+    // Check for thinking mode (✻ Thinking)
+    if (cleanedLine.startsWith('✻ Thinking')) {
+        // Could add thinking mode support here if needed
+        return;
+    }
+    
     // If we're collecting a message
     if (collectingMessage) {
-        // Stop on empty line, UI elements, or tool calls
-        if (!cleanLine || 
-            cleanLine.startsWith('✻') ||
-            cleanLine.startsWith('✽') ||
-            cleanLine.startsWith('·') ||
-            cleanLine.startsWith('╭') ||
-            cleanLine.startsWith('│') ||
-            cleanLine.startsWith('╰') ||
-            cleanLine.includes('tokens') ||
-            cleanLine.includes('esc to interrupt') ||
-            cleanLine.includes('(MCP)') ||
-            cleanLine.includes('asana:') ||
-            cleanLine.includes('github:') ||
-            cleanLine.includes('obsidian:') ||
-            cleanLine.startsWith('Using') ||
-            cleanLine.match(/^\w+\(/) ||
-            isTodoContent(cleanLine)) {    // Stop if we hit todo content
-            
-            // Speak what we collected
+        // Stop conditions
+        if (!cleanedLine || 
+            cleanedLine.startsWith('⏺') ||
+            cleanedLine.startsWith('✻') ||
+            cleanedLine.startsWith('✽') ||
+            cleanedLine.startsWith('·') ||
+            cleanedLine.startsWith('✓') ||
+            cleanedLine.startsWith('✗') ||
+            cleanedLine.match(/^\[\s*[✓→]\s*\]/) || // Todo indicators
+            cleanedLine.match(/^#{1,6}\s/) ||        // Markdown headers
+            cleanedLine.match(/^\d+\.\s/) ||          // Numbered lists in output
+            isToolOutput(cleanedLine) ||
+            isGarbage(cleanedLine)
+        ) {
+            // Speak collected message
             if (messageBuffer.length > 0) {
-                const fullMessage = messageBuffer.join(' ');
+                const fullMessage = messageBuffer.join(' ').trim();
                 speak(fullMessage);
             }
             messageBuffer = [];
             collectingMessage = false;
-        } else if (!isTodoContent(cleanLine)) {  // Don't add todo content lines
-            // Add non-empty, non-todo line to message
-            messageBuffer.push(cleanLine);
+            
+            // If this was a new bullet, process it
+            if (cleanedLine.startsWith('⏺')) {
+                processLine(line);
+            }
+        } else {
+            // Continue collecting
+            messageBuffer.push(cleanedLine);
         }
     }
 }
 
-// Find claude
+// Find claude binary
 function findClaude() {
     const paths = ['claude', '/usr/local/bin/claude', '/opt/homebrew/bin/claude'];
     for (const p of paths) {
@@ -381,7 +400,7 @@ function findClaude() {
     process.exit(1);
 }
 
-// Show voice menu (standalone)
+// Show voice menu
 function showVoiceMenu() {
     console.log('\n🎙️  ClaudeVoice Settings\n');
     console.log('Available voices:\n');
@@ -399,7 +418,7 @@ function showVoiceMenu() {
 }
 
 // Main
-const args = process.argv.slice(2);
+let args = process.argv.slice(2);
 
 // Handle special commands
 if (args[0] === '--help') {
@@ -409,6 +428,9 @@ if (args[0] === '--help') {
     console.log('  --voice <number>  Change voice (1-15)');
     console.log('  --list-voices     List available voices');
     console.log('  --help            Show this help');
+    console.log('\nCommands during session:');
+    console.log('  //stfu or cvstfu!  Stop TTS immediately');
+    console.log('\nBased on comprehensive pattern analysis of Claude Code output');
     process.exit(0);
 } else if (args[0] === '--list-voices') {
     showVoiceMenu();
@@ -483,7 +505,8 @@ claude.on('exit', (code) => {
     
     // Final message if still collecting
     if (collectingMessage && messageBuffer.length > 0) {
-        speak(messageBuffer.join(' '));
+        const fullMessage = messageBuffer.join(' ').trim();
+        speak(fullMessage);
     }
     
     setTimeout(() => process.exit(code || 0), 200);
@@ -491,7 +514,6 @@ claude.on('exit', (code) => {
 
 // Handle interrupt
 process.on('SIGINT', () => {
-    audioQueue = [];
-    spokenMessages.clear();
+    stopAllTTS();
     claude.kill('SIGINT');
 });

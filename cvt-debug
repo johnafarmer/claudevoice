@@ -1,0 +1,294 @@
+#!/usr/bin/env node
+
+/**
+ * ClaudeVoice DEBUG VERSION - Logs all raw terminal output
+ */
+
+const { spawn } = require('child_process');
+const os = require('os');
+const fs = require('fs');
+const path = require('path');
+
+// Load Edge-TTS (same as regular version)
+let EdgeTTS;
+let npmGlobalRoot;
+try {
+    npmGlobalRoot = require('child_process')
+        .execSync('npm root -g', { encoding: 'utf8' })
+        .trim();
+} catch {}
+
+const ttsLocations = [
+    './node_modules/node-edge-tts',
+    npmGlobalRoot && path.join(npmGlobalRoot, 'node-edge-tts'),
+    path.join(os.homedir(), '.npm-global/lib/node_modules/node-edge-tts'),
+    '/usr/local/lib/node_modules/node-edge-tts',
+    '/opt/homebrew/lib/node_modules/node-edge-tts',
+    'node-edge-tts'
+].filter(Boolean);
+
+for (const loc of ttsLocations) {
+    try {
+        EdgeTTS = require(loc).EdgeTTS;
+        break;
+    } catch {}
+}
+
+if (!EdgeTTS) {
+    console.error('Error: node-edge-tts not found. Install with:');
+    console.error('  npm install -g node-edge-tts');
+    process.exit(1);
+}
+
+// Debug setup
+const DEBUG_DIR = './terminal-captures';
+const TIMESTAMP = new Date().toISOString().replace(/[:.]/g, '-');
+const RAW_LOG = path.join(DEBUG_DIR, `raw_${TIMESTAMP}.log`);
+const HEX_LOG = path.join(DEBUG_DIR, `hex_${TIMESTAMP}.log`);
+const CLEAN_LOG = path.join(DEBUG_DIR, `clean_${TIMESTAMP}.log`);
+const EVENTS_LOG = path.join(DEBUG_DIR, `events_${TIMESTAMP}.log`);
+
+// Create debug directory
+fs.mkdirSync(DEBUG_DIR, { recursive: true });
+
+console.log('🔍 ClaudeVoice DEBUG MODE');
+console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+console.log(`Raw output: ${RAW_LOG}`);
+console.log(`Hex dump: ${HEX_LOG}`);
+console.log(`Clean text: ${CLEAN_LOG}`);
+console.log(`Events: ${EVENTS_LOG}`);
+console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+console.log('');
+
+// Log functions
+function logRaw(data) {
+    fs.appendFileSync(RAW_LOG, data);
+}
+
+function logHex(data) {
+    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    const hex = buffer.toString('hex').match(/.{1,2}/g).join(' ');
+    const ascii = buffer.toString().replace(/[^\x20-\x7E]/g, '.');
+    fs.appendFileSync(HEX_LOG, `${hex} | ${ascii}\n`);
+}
+
+function logClean(line) {
+    const clean = line.replace(/\x1b\[[^m]*m/g, '').replace(/\x1b\]?[^\x1b\x07]*[\x1b\x07]/g, '').trim();
+    if (clean) {
+        fs.appendFileSync(CLEAN_LOG, clean + '\n');
+    }
+}
+
+function logEvent(event, data) {
+    const timestamp = new Date().toISOString();
+    fs.appendFileSync(EVENTS_LOG, `[${timestamp}] ${event}: ${JSON.stringify(data)}\n`);
+}
+
+// Config and TTS setup (simplified)
+const CONFIG_PATH = path.join(os.homedir(), '.claudevoice-config.json');
+let config = { voice: 'en-US-BrianNeural' };
+try {
+    if (fs.existsSync(CONFIG_PATH)) {
+        config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    }
+} catch (e) {
+    // Use default config
+}
+let tts = new EdgeTTS({ voice: config.voice });
+let audioQueue = [];
+let isPlaying = false;
+let currentAudioProcess = null;
+
+// Audio functions (same as regular)
+async function playAudio() {
+    if (isPlaying || audioQueue.length === 0) return;
+    
+    isPlaying = true;
+    const text = audioQueue.shift();
+    logEvent('SPEAKING', text);
+    
+    try {
+        const tempFile = path.join(os.tmpdir(), `claude-${Date.now()}.mp3`);
+        await tts.ttsPromise(text, tempFile);
+        
+        const player = process.platform === 'darwin' ? 'afplay' :
+                       process.platform === 'win32' ? 'powershell' : 'aplay';
+        const args = process.platform === 'win32' ? 
+            ['-c', `(New-Object Media.SoundPlayer '${tempFile}').PlaySync()`] : [tempFile];
+        
+        currentAudioProcess = spawn(player, args, { stdio: 'ignore' });
+        currentAudioProcess.on('exit', () => {
+            try { fs.unlinkSync(tempFile); } catch {}
+            currentAudioProcess = null;
+            isPlaying = false;
+            playAudio();
+        });
+    } catch {
+        currentAudioProcess = null;
+        isPlaying = false;
+        playAudio();
+    }
+}
+
+function speak(text) {
+    if (text.trim().length > 10) {
+        audioQueue.push(text.trim());
+        playAudio();
+    }
+}
+
+function stopAllTTS() {
+    logEvent('STOP_TTS', 'User triggered stop');
+    audioQueue = [];
+    if (currentAudioProcess) {
+        try {
+            currentAudioProcess.kill('SIGKILL');
+        } catch {}
+        currentAudioProcess = null;
+    }
+    isPlaying = false;
+}
+
+// Line processing with detailed logging
+let messageBuffer = [];
+let collectingMessage = false;
+
+function processLine(line) {
+    logClean(line);
+    
+    // Log special patterns
+    if (line.includes('//stfu') || line.includes('cvstfu!')) {
+        logEvent('INTERRUPT', line);
+        stopAllTTS();
+        return;
+    }
+    
+    if (line.includes('/compact')) {
+        logEvent('COMPACT_DETECTED', line);
+    }
+    
+    if (line.includes('/plan')) {
+        logEvent('PLAN_MODE_DETECTED', line);
+    }
+    
+    // Look for garbage patterns in raw line
+    const garbagePatterns = ['99', '2k1a', '1a2k', '1004l', '?1004'];
+    garbagePatterns.forEach(pattern => {
+        if (line.includes(pattern)) {
+            logEvent('GARBAGE_PATTERN', { pattern, line: line.substring(0, 100) });
+        }
+    });
+    
+    // Strip ANSI
+    const strippedLine = line.replace(/\x1b\[[^m]*m/g, '').trim();
+    
+    // Check for bullet
+    if (strippedLine.startsWith('⏺')) {
+        logEvent('BULLET_FOUND', strippedLine.substring(0, 50));
+        const afterBullet = strippedLine.substring(1).trim();
+        
+        if (afterBullet && afterBullet.length > 10) {
+            messageBuffer = [afterBullet];
+            collectingMessage = true;
+            logEvent('START_COLLECTING', afterBullet.substring(0, 50));
+        }
+        return;
+    }
+    
+    // Continue collecting
+    if (collectingMessage) {
+        if (!strippedLine || strippedLine.match(/^[⏺✻✽·]/)) {
+            if (messageBuffer.length > 0) {
+                const fullMessage = messageBuffer.join(' ').trim();
+                logEvent('MESSAGE_COMPLETE', fullMessage.substring(0, 100));
+                speak(fullMessage);
+            }
+            messageBuffer = [];
+            collectingMessage = false;
+        } else {
+            messageBuffer.push(strippedLine);
+        }
+    }
+}
+
+// Find claude
+function findClaude() {
+    const paths = ['claude', '/usr/local/bin/claude', '/opt/homebrew/bin/claude'];
+    for (const p of paths) {
+        try {
+            require('child_process').execSync(`which ${p}`, { stdio: 'ignore' });
+            return p;
+        } catch {}
+    }
+    console.error('Claude Code CLI not found');
+    process.exit(1);
+}
+
+// Main
+const args = process.argv.slice(2);
+const claudeBin = findClaude();
+const command = '/usr/bin/script';
+
+// Join args if they're not flags
+let claudeArgs = args;
+if (args.length > 0 && !args[0].startsWith('-')) {
+    claudeArgs = [args.join(' ')];
+}
+
+const commandArgs = ['-q', '/dev/null', claudeBin, ...claudeArgs];
+
+logEvent('START', { command, args });
+
+const claude = spawn(command, commandArgs, {
+    stdio: ['inherit', 'pipe', 'inherit'],
+    env: { ...process.env, TERM: 'xterm-256color' },
+    shell: false
+});
+
+// Process output
+let buffer = '';
+let chunkCount = 0;
+
+claude.stdout.on('data', (chunk) => {
+    // Pass through to terminal
+    process.stdout.write(chunk);
+    
+    // Log raw data
+    logRaw(chunk);
+    logHex(chunk);
+    
+    // Log chunk info
+    if (++chunkCount % 10 === 0) {
+        logEvent('CHUNK_COUNT', chunkCount);
+    }
+    
+    // Process lines
+    buffer += chunk.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    
+    for (const line of lines) {
+        processLine(line);
+    }
+});
+
+claude.on('exit', (code) => {
+    if (buffer) processLine(buffer);
+    
+    logEvent('EXIT', { code, chunksReceived: chunkCount });
+    
+    console.log('');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('Debug session complete! Check the logs:');
+    console.log(`  grep "GARBAGE_PATTERN" ${EVENTS_LOG}`);
+    console.log(`  grep "⏺" ${CLEAN_LOG}`);
+    console.log(`  grep -E "(99|2k1a|1004l)" ${RAW_LOG}`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    setTimeout(() => process.exit(code || 0), 200);
+});
+
+process.on('SIGINT', () => {
+    stopAllTTS();
+    claude.kill('SIGINT');
+});

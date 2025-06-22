@@ -61,9 +61,9 @@ echo ""
 echo "🔧 Setting up ClaudeVoice..."
 chmod +x claudevoice
 
-# Make cvt executable if it exists
-if [ -f "cvt" ]; then
-    chmod +x cvt
+# Make cv executable if it exists
+if [ -f "cv" ]; then
+    chmod +x cv
 fi
 
 # Install to /usr/local/bin
@@ -77,15 +77,6 @@ if sudo cp claudevoice /usr/local/bin/; then
     else
         echo "⚠️  Failed to create 'cv' alias"
     fi
-    # Install cvt if it exists
-    if [ -f "cvt" ]; then
-        echo "🧠 Installing 'cvt' for thinking mode..."
-        if sudo cp cvt /usr/local/bin/; then
-            echo "✅ 'cvt' command installed!"
-        else
-            echo "⚠️  Failed to install 'cvt' command"
-        fi
-    fi
 else
     echo "❌ Failed to install to /usr/local/bin"
     echo "You can manually copy claudevoice to a directory in your PATH"
@@ -95,13 +86,19 @@ fi
 echo ""
 echo "🎉 Installation complete!"
 echo ""
-echo "Test it out:"
-echo "  claudevoice --list-voices    # See available voices"
-echo "  claudevoice --voice 10       # Try a British accent"
-echo "  claudevoice \"hello world\"    # Start using Claude with voice!"
+echo "Usage:"
+echo "  cv \"your question here\"        # Recommended alias"
+echo "  claudevoice \"your question\"    # Full command"
 echo ""
-echo "You can also use shortcuts:"
-echo "  cv \"hello world\"            # Same as claudevoice"
-echo "  cvt \"explain this code\"     # Includes Claude's thinking output"
+echo "Other commands:"
+echo "  cv --list-voices              # See available voices"
+echo "  cv --voice 10                 # Try a British accent"
+echo "  cv --help                     # See all options"
+echo ""
+echo "During session:"
+echo "  Type //stfu or cvstfu!        # Stop TTS immediately"
+echo ""
+echo "Try it now:"
+echo "  cv \"What is the meaning of life?\""
 echo ""
 echo "Enjoy your new AI voice assistant! 🚀"
