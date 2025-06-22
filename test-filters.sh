@@ -1,0 +1,30 @@
+#!/bin/bash
+
+echo "Testing ClaudeVoice filtering improvements..."
+echo ""
+echo "To enable debug mode and see what's being filtered:"
+echo "  export CLAUDEVOICE_DEBUG=1"
+echo ""
+echo "Test commands to try:"
+echo ""
+echo "1. Test basic conversation:"
+echo "   ./claudevoice 'What is 2+2?'"
+echo ""
+echo "2. Test with file creation (triggers approval):"
+echo "   ./claudevoice 'Create a file called test.txt with hello world'"
+echo ""
+echo "3. Test with todo operations:"
+echo "   ./claudevoice 'Create a todo list for building a web app'"
+echo ""
+echo "4. Test with code analysis:"
+echo "   ./claudevoice 'Explain this code' < claudevoice"
+echo ""
+echo "5. Test interrupt command:"
+echo "   While TTS is speaking, type: //stfu or cvstfu!"
+echo ""
+echo "Press Enter to run a basic test..."
+read
+
+# Run a simple test
+echo "Running: ./claudevoice 'What is the capital of France?'"
+./claudevoice "What is the capital of France?"

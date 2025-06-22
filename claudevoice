@@ -88,15 +88,16 @@ function isToolRelatedMessage(message) {
 
 // Check if message is todo-related content (should be filtered)
 function isTodoContent(message) {
-    // Direct todo list patterns - be specific to avoid filtering legitimate numbered content
+    // Direct todo list patterns
     const todoPatterns = [
+        /^[\d\-\*•·]\s*(.*)/,                     // Bulleted/numbered lists
         /^Todo\s*\d*:/i,                          // Todo labels
         /^Task\s*\d*:/i,                          // Task labels
         /^Item\s*\d*:/i,                          // Item labels
         /^\[\s*\]/,                               // Checkboxes
         /^\[x\]/i,                                // Checked boxes
-        /^(pending|in.?progress|completed)\s*(todo|task)/i,  // Status indicators with todo/task
-        /^(high|medium|low)\s*priority\s*(todo|task)/i,      // Priority indicators with todo/task
+        /^(pending|in.?progress|complet)/i,      // Status indicators
+        /^(high|medium|low)\s*priority/i,        // Priority indicators
         /todos?\s*list|task\s*list/i,            // List references
         /^Here'?s?\s*(the|my|your)?\s*todos?/i,  // Todo introductions
         /^Current\s*todos?:/i,                   // Current todo headers
@@ -228,7 +229,7 @@ let thinkingMode = false;
 let sawPlanPresentation = false;
 
 function processLine(line) {
-    // Check for //stfu command
+    // Check for //stfu or cvstfu! command
     if (line.includes('//stfu') || line.includes('cvstfu!')) {
         stopAllTTS();
         return; // Don't process this line further
